@@ -278,7 +278,7 @@ const SESSION_KEY='NFL_PICKEM_PLAYER_SESSION_V1';
 const SB_URL='https://inpqztuwlvdpvrflwkoh.supabase.co';
 const SB_KEY='sb_publishable_ah4kvIWzxHOQiP8aZKbm8A_HEbuv5tq';
 async function sb(path,opts={}){const session=localStorage.getItem(SESSION_KEY)||'';const headers=Object.assign({'apikey':SB_KEY,'Content-Type':'application/json','Prefer':'return=representation','x-player-session':session},opts.headers||{});const r=await fetch(SB_URL+'/rest/v1/'+path,Object.assign({},opts,{headers}));if(!r.ok)throw new Error(await r.text());const t=await r.text();return t?JSON.parse(t):null}
-let D=load(), tempPicks={}, tempTiebreaker=null;if(!D.tiebreakers)D.tiebreakers={};
+let D=load(), tempPicks={}, tempTiebreaker=null, lastAutoWeek=0;if(!D.tiebreakers)D.tiebreakers={};
 function fresh(){return{games:JSON.parse(JSON.stringify(SEED)),players:[],picks:{},tiebreakers:{}}}
 function load(){try{let x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.games))return x}catch(e){}return fresh()}
 function save(){localStorage.setItem(KEY,JSON.stringify(D))}
@@ -288,66 +288,43 @@ for(let i=1;i<=22;i++){let n=i<=18?'Week '+i:['Wild Card','Divisional','Conferen
 document.querySelectorAll('.sf-tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.sf-tab').forEach(x=>x.classList.remove('on'));b.classList.add('on');document.querySelectorAll('.sf-section').forEach(x=>x.classList.remove('on'));$(b.dataset.p).classList.add('on');render()});
 week.onchange=()=>{renderSchedule();updateOfficialResults(true,Number(week.value))};resultWeek.onchange=()=>{renderResults();updateOfficialResults(true,Number(resultWeek.value))};pickWeek.onchange=renderPicks;pickPlayer.onchange=()=>{const me=currentPlayer();if(me)pickPlayer.value=me.id;renderPicks()};
 
-const ESPN_SCOREBOARD='https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-function normalizeESPNAbbr(a){
-  const m={JAX:'JAC',WSH:'WAS',LA:'LAR'};
-  return m[a]||a;
+const SYNC_FUNCTION_URL=SB_URL+'/functions/v1/sync-nfl';
+async function syncOfficialWeeks(weeks){
+  const clean=[...new Set((weeks||[]).map(Number).filter(w=>Number.isInteger(w)&&w>=1&&w<=22))].slice(0,4);
+  if(!clean.length)return null;
+  const res=await fetch(SYNC_FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':SB_KEY},body:JSON.stringify({weeks:clean}),cache:'no-store'});
+  const body=await res.json().catch(()=>null);
+  if(!res.ok||!body||body.ok===false)throw new Error(body&&body.error?body.error:'Official NFL sync failed');
+  return body;
 }
-function setSyncStatus(msg,kind){
-  const el=$('syncStatus');
-  if(!el)return;
-  el.textContent=msg;
-  el.className='syncstatus'+(kind?' '+kind:'');
+function latestCompletedWeek(){
+  let latest=0;
+  for(let w=2;w<=18;w++)if(weekComplete(w))latest=w;
+  return latest;
+}
+function appCurrentWeek(){
+  const calendar=currentNFLWeek();
+  if(calendar>=18)return calendar;
+  if(weekComplete(calendar)&&gamesFor(calendar+1).length)return calendar+1;
+  return calendar;
 }
 async function updateOfficialResults(silent=false, requestedWeek){
-  const w=Number(requestedWeek||week.value||1);
-  if(w<1||w>22)return;
-  if(!silent)setSyncStatus('Checking official results…','');
+  const requested=Number(requestedWeek||appCurrentWeek()||1);
+  if(requested<1||requested>22)return false;
+  if(!silent)setSyncStatus('Checking official NFL schedule and results…','');
   try{
-    // Regular season weeks 1-18; postseason weeks 19-22 map to ESPN season type 3.
-    const seasonType=w<=18?2:3;
-    const apiWeek=w<=18?w:w-18;
-    const url=ESPN_SCOREBOARD+'?dates=2026&seasontype='+seasonType+'&week='+apiWeek+'&limit=100';
-    const res=await fetch(url,{cache:'no-store'});
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const events=Array.isArray(data.events)?data.events:[];
-    let finals=0,matched=0,added=0;
-    events.forEach(ev=>{
-      const c=ev.competitions&&ev.competitions[0];
-      if(!c||!Array.isArray(c.competitors))return;
-      const awayC=c.competitors.find(x=>x.homeAway==='away');
-      const homeC=c.competitors.find(x=>x.homeAway==='home');
-      if(!awayC||!homeC)return;
-      const away=normalizeESPNAbbr(awayC.team&&awayC.team.abbreviation);
-      const home=normalizeESPNAbbr(homeC.team&&homeC.team.abbreviation);
-      if(!away||!home)return;
-      let g=D.games.find(x=>Number(x.week)===w&&x.away===away&&x.home===home);
-      if(!g){
-        g={id:`2026-w${w}-${away}-${home}`,week:w,away,home,date:ev.date||'',ascore:null,hscore:null,winner:null};
-        D.games.push(g);added++;
-      }
-      matched++;
-      if(ev.date)g.date=ev.date;
-      const completed=!!(ev.status&&ev.status.type&&ev.status.type.completed);
-      if(completed){
-        const as=Number(awayC.score),hs=Number(homeC.score);
-        if(Number.isFinite(as)&&Number.isFinite(hs)){
-          g.ascore=as;g.hscore=hs;
-          g.winner=as>hs?away:hs>as?home:null;
-          if(g.winner)finals++;
-        }
-      }
-    });
-    D.lastOfficialSync=new Date().toISOString();
-    save();
-    await syncGamesToShared();
+    const calendar=currentNFLWeek();
+    const weeks=[Math.max(1,calendar-1),calendar,Math.min(22,calendar+1),requested];
+    await syncOfficialWeeks(weeks);
+    await loadSharedData();
+    repairVisualUI();
     render();
-    setSyncStatus(`Updated ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}: ${finals} final result${finals===1?'':'s'} found for Week ${w}.`,'good');
+    const gs=gamesFor(requested), finals=gs.filter(g=>!!actualWinner(g)).length;
+    setSyncStatus(`Updated ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}: ${finals} final result${finals===1?'':'s'} found for Week ${requested}.`,'good');
     return true;
   }catch(err){
-    setSyncStatus('Automatic results unavailable. Commissioner manual result entry is available under Manage.','bad');
-    if(!silent)console.warn('Official result update failed:',err);
+    console.warn('Official NFL sync failed:',err);
+    setSyncStatus('Automatic NFL sync unavailable. Existing shared data is still available.','bad');
     return false;
   }
 }
@@ -371,7 +348,7 @@ async function resetPlayerPin(playerId,name){if(!isCommissionerPlayer()){setComm
 async function logoutPlayer(){const tok=localStorage.getItem(SESSION_KEY)||'';try{if(tok)await sb('rpc/logout_player',{method:'POST',body:JSON.stringify({p_session_token:tok})})}catch(e){}localStorage.removeItem(SESSION_KEY);localStorage.removeItem(IDENTITY_KEY);setIdentityDisplay();openIdentity();}
 $('identityPin').addEventListener('keydown',e=>{if(e.key==='Enter'&&!$('identityContinue').disabled)saveIdentity()});
 $('tiebreakerTotal').addEventListener('input',e=>{tempTiebreaker=e.target.value;if($('lastSaved'))$('lastSaved').textContent='Unsaved changes';});
-function showPickemForMe(){const p=currentPlayer();if(!p)return;if($('pickPlayer'))pickPlayer.value=p.id;if($('pickWeek'))pickWeek.value=String(currentNFLWeek());renderPicks();renderSidebars();headerTop3()}
+function showPickemForMe(){const p=currentPlayer();if(!p)return;if($('pickPlayer'))pickPlayer.value=p.id;if($('pickWeek'))pickWeek.value=String(appCurrentWeek());renderPicks();renderSidebars();headerTop3()}
 function ensureIdentity(){setIdentityDisplay();if(!currentPlayer()||!localStorage.getItem(SESSION_KEY))openIdentity();renderPinResetList();}
 
 async function loadSharedData(){try{const [players,games,picks,tbs]=await Promise.all([sb('players?select=id,name,created_at&order=created_at.asc'),sb('games?select=*&order=week.asc,kickoff.asc'),sb('picks?select=*'),sb('weekly_tiebreakers?select=*')]);if(players)D.players=players.map(x=>({id:x.id,name:x.name}));if(games&&games.length)D.games=games.map(g=>({id:g.id,week:g.week,away:g.away,home:g.home,date:g.kickoff,ascore:g.away_score,hscore:g.home_score,winner:g.winner,status:g.status}));D.picks={};(picks||[]).forEach(x=>{const g=D.games.find(q=>q.id===x.game_id);if(!g)return;const k=x.player_id+'|'+g.week;if(!D.picks[k])D.picks[k]={games:{}};D.picks[k].games[x.game_id]=x.pick});D.tiebreakers={};(tbs||[]).forEach(x=>D.tiebreakers[x.player_id+'|'+x.week]=+x.predicted_total);save();setIdentityDisplay();return true}catch(e){console.warn('Shared data load failed',e);return false}}
@@ -414,7 +391,7 @@ function teamLogoHtml(a){const m={WAS:'wsh',JAC:'jax'};const x=m[a]||String(a).t
 function gamesFor(w){return D.games.filter(g=>+g.week===+w).sort((a,b)=>new Date(a.date)-new Date(b.date))}
 
 function repairVisualUI(forceWeek){
-  const current=Number(forceWeek)||currentNFLWeek();
+  const current=Number(forceWeek)||appCurrentWeek();
   ['week','pickWeek','resultWeek'].forEach(id=>{
     const el=$(id);if(!el)return;
     const keep=forceWeek?current:(Number(el.value)||current);
@@ -465,7 +442,7 @@ function renderPlayers(){let me=currentPlayer();const manageTab=document.querySe
 function renderPicks(preserveTemp=false){
  let pid=pickPlayer.value,w=+pickWeek.value,gs=gamesFor(w),saved=D.picks[pid+'|'+w]||{games:{}};if(!D.tiebreakers)D.tiebreakers={};let tb=D.tiebreakers[pid+'|'+w];if(!preserveTemp){tempPicks={...saved.games};tempTiebreaker=tb==null?'':String(tb)}if($('tiebreakerTotal'))$('tiebreakerTotal').value=tempTiebreaker==null?'':tempTiebreaker;
  const title=$('pickWeekTitle');if(title)title.textContent='Week '+w;
- if(gs.length&&$('pickWeekDates')){let d=gs.map(g=>new Date(g.date)).filter(x=>!isNaN(x));if(d.length){let lo=new Date(Math.min(...d)),hi=new Date(Math.max(...d));$('pickWeekDates').textContent=lo.toLocaleDateString([], {month:'short',day:'numeric'})+' - '+hi.toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'})+(w===currentNFLWeek()?' (Current Week)':'')}}
+ if(gs.length&&$('pickWeekDates')){let d=gs.map(g=>new Date(g.date)).filter(x=>!isNaN(x));if(d.length){let lo=new Date(Math.min(...d)),hi=new Date(Math.max(...d));$('pickWeekDates').textContent=lo.toLocaleDateString([], {month:'short',day:'numeric'})+' - '+hi.toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'})+(w===appCurrentWeek()?' (Current Week)':'')}}
  if(!gs.length){pickGames.innerHTML='<p>No games loaded for this week.</p>';return}
  pickGames.innerHTML='<div class="sf-table"><table><thead><tr><th>Date / Time (ET)</th><th>Away Team (Record)</th><th>vs</th><th>Home Team (Record)</th><th>Your Pick</th><th>Status</th></tr></thead><tbody>'+
  gs.map(g=>{let locked=picksLocked(g),d=new Date(g.date),sel=tempPicks[g.id];return `<tr>
@@ -486,7 +463,7 @@ function renderSidebars(){
  const medals=['🥇','🥈','🥉'];$('sidebarTop3').innerHTML=rows.slice(0,3).map((x,i)=>`<div class="side-row"><div class="side-player"><span class="medal">${medals[i]}</span>${esc(x.p.name)}</div><b>${x.s.c} - ${x.s.l}</b></div>`).join('')||'<p class="muted">No completed picks yet.</p>';
  let me=currentPlayer(),mine=me?rows.find(x=>x.p.id===me.id):null;let rank=mine?rows.indexOf(mine)+1:'—';$('yourName').textContent=me?me.name:'—';$('yourRecord').textContent=mine?mine.s.c+' - '+mine.s.l:'0 - 0';$('yourRank').textContent=rank;
 }
-function renderLeaders(){let cw=Math.max(2,Math.min(18,currentNFLWeek())),weekly=weeklyRanking(cw),a=D.players.map(p=>({p,s:score(p.id)})).sort((x,y)=>y.s.c-x.s.c||x.s.l-y.s.l||x.p.name.localeCompare(y.p.name));leaderTable.innerHTML='<h3>Week '+cw+' Standings</h3><div class="scroll"><table><tr><th>Rank</th><th>Player</th><th>Week</th><th>Tiebreaker</th></tr>'+weekly.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.p.name)}</td><td>${x.s.c}-${x.s.l}</td><td>${x.tb==null?'—':x.tb}</td></tr>`).join('')+'</table></div><h3 style="margin-top:24px">Season Standings</h3><div class="scroll"><table><tr><th>Rank</th><th>Player</th><th>Correct</th><th>Wrong</th><th>Accuracy</th></tr>'+a.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.p.name)}</td><td>${x.s.c}</td><td>${x.s.l}</td><td>${(x.s.n?x.s.c/x.s.n*100:0).toFixed(1)}%</td></tr>`).join('')+'</table></div>';let x=a[0];leadName.textContent=x&&x.s.n?x.p.name:'—';leadCorrect.textContent=x?x.s.c:0;leadWrong.textContent=x?x.s.l:0;leadPct.textContent=x&&x.s.n?(x.s.c/x.s.n*100).toFixed(1)+'%':'0%';let hist=[];for(let w=2;w<=18;w++){let ch=weeklyChampion(w);if(ch&&weekComplete(w))hist.push({w,ch})}$('weeklyHistory').innerHTML='<h3 style="margin-top:24px">Weekly Winners</h3>'+(hist.length?'<div class="scroll"><table><tr><th>Week</th><th>Winner</th><th>Record</th></tr>'+hist.map(h=>`<tr><td>${h.w}</td><td>${esc(h.ch.p.name)}</td><td>${h.ch.s.c}-${h.ch.s.l}</td></tr>`).join('')+'</table></div>':'<p class="muted">Weekly winners will appear after games are completed.</p>');let wins={};hist.forEach(h=>wins[h.ch.p.id]=(wins[h.ch.p.id]||0)+1);$('achievements').innerHTML='<h3 style="margin-top:24px">Achievements</h3><div class="scroll"><table><tr><th>Player</th><th>Weekly Wins</th><th>Perfect Weeks</th><th>Best Streak</th><th>Best Week</th></tr>'+D.players.map(p=>{let st=streakStats(p.id);return `<tr><td>${esc(p.name)}</td><td>${wins[p.id]||0}</td><td>${st.perfect}</td><td>${st.best}</td><td>${st.bestCorrect?`W${st.bestWeek}: ${st.bestCorrect} correct`:'—'}</td></tr>`}).join('')+'</table></div>'}
+function renderLeaders(){let cw=latestCompletedWeek()||Math.max(2,Math.min(18,appCurrentWeek())),weekly=weeklyRanking(cw),a=D.players.map(p=>({p,s:score(p.id)})).sort((x,y)=>y.s.c-x.s.c||x.s.l-y.s.l||x.p.name.localeCompare(y.p.name));leaderTable.innerHTML='<h3>Week '+cw+' Standings</h3><div class="scroll"><table><tr><th>Rank</th><th>Player</th><th>Week</th><th>Tiebreaker</th></tr>'+weekly.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.p.name)}</td><td>${x.s.c}-${x.s.l}</td><td>${x.tb==null?'—':x.tb}</td></tr>`).join('')+'</table></div><h3 style="margin-top:24px">Season Standings</h3><div class="scroll"><table><tr><th>Rank</th><th>Player</th><th>Correct</th><th>Wrong</th><th>Accuracy</th></tr>'+a.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.p.name)}</td><td>${x.s.c}</td><td>${x.s.l}</td><td>${(x.s.n?x.s.c/x.s.n*100:0).toFixed(1)}%</td></tr>`).join('')+'</table></div>';let x=a[0];leadName.textContent=x&&x.s.n?x.p.name:'—';leadCorrect.textContent=x?x.s.c:0;leadWrong.textContent=x?x.s.l:0;leadPct.textContent=x&&x.s.n?(x.s.c/x.s.n*100).toFixed(1)+'%':'0%';let hist=[];for(let w=2;w<=18;w++){let ch=weeklyChampion(w);if(ch&&weekComplete(w))hist.push({w,ch})}$('weeklyHistory').innerHTML='<h3 style="margin-top:24px">Weekly Winners</h3>'+(hist.length?'<div class="scroll"><table><tr><th>Week</th><th>Winner</th><th>Record</th></tr>'+hist.map(h=>`<tr><td>${h.w}</td><td>${esc(h.ch.p.name)}</td><td>${h.ch.s.c}-${h.ch.s.l}</td></tr>`).join('')+'</table></div>':'<p class="muted">Weekly winners will appear after games are completed.</p>');let wins={};hist.forEach(h=>wins[h.ch.p.id]=(wins[h.ch.p.id]||0)+1);$('achievements').innerHTML='<h3 style="margin-top:24px">Achievements</h3><div class="scroll"><table><tr><th>Player</th><th>Weekly Wins</th><th>Perfect Weeks</th><th>Best Streak</th><th>Best Week</th></tr>'+D.players.map(p=>{let st=streakStats(p.id);return `<tr><td>${esc(p.name)}</td><td>${wins[p.id]||0}</td><td>${st.perfect}</td><td>${st.best}</td><td>${st.bestCorrect?`W${st.bestWeek}: ${st.bestCorrect} correct`:'—'}</td></tr>`}).join('')+'</table></div>'}
 function exportData(){let blob=new Blob([JSON.stringify(D,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='NFL_Predictor_Backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href)}
 save();
 const BOOT_WEEK=currentNFLWeek();
@@ -495,18 +472,23 @@ repairVisualUI(BOOT_WEEK);
 render();
 (async()=>{
   try{
-    const g=await sb('games?select=id&limit=1');
-    if(!g||!g.length)await syncGamesToShared();
     await loadSharedData();
-  }catch(e){console.warn('Shared startup failed',e)}
-  const cw=currentNFLWeek();
+    const cal=currentNFLWeek();
+    await syncOfficialWeeks([Math.max(1,cal-1),cal,Math.min(22,cal+1)]);
+    await loadSharedData();
+  }catch(e){console.warn('Shared startup/sync failed',e)}
+  const cw=appCurrentWeek();
+  lastAutoWeek=cw;
+  const rw=latestCompletedWeek()||Math.max(2,currentNFLWeek());
   repairVisualUI(cw);
-  ['week','pickWeek','resultWeek'].forEach(id=>{const el=$(id);if(el)el.value=String(cw)});
+  if($('week'))$('week').value=String(cw);
+  if($('pickWeek'))$('pickWeek').value=String(cw);
+  if($('resultWeek'))$('resultWeek').value=String(rw);
   const me=currentPlayer();
   if(me&&$('pickPlayer'))pickPlayer.value=me.id;
   render();
   ensureIdentity();
-  setTimeout(()=>updateOfficialResults(true,cw),500);
 })();
-setInterval(()=>updateOfficialResults(true,Number(week.value||1)),10*60*1000);setInterval(()=>loadSharedData(),30*1000);
+setInterval(()=>updateOfficialResults(true,appCurrentWeek()),10*60*1000);
+setInterval(async()=>{await loadSharedData();const cw=appCurrentWeek();if(lastAutoWeek&&cw!==lastAutoWeek){if($('pickWeek')&&Number($('pickWeek').value)===lastAutoWeek)$('pickWeek').value=String(cw);if($('week')&&Number($('week').value)===lastAutoWeek)$('week').value=String(cw);lastAutoWeek=cw;repairVisualUI();}render();},30*1000);
 </script></body></html>
