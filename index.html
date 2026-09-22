@@ -369,13 +369,15 @@ function teamRecord(team,throughWeek){
 }
 function currentNFLWeek(){
   const now=new Date();
+  // Family pick'em rolls to the next card on Tuesday, after the prior
+  // NFL week has finished, rather than waiting for Thursday kickoff.
   const starts=[
-    new Date(2026,8,9),new Date(2026,8,17),new Date(2026,8,24),
-    new Date(2026,9,1),new Date(2026,9,8),new Date(2026,9,15),
-    new Date(2026,9,22),new Date(2026,9,29),new Date(2026,10,5),
-    new Date(2026,10,12),new Date(2026,10,19),new Date(2026,10,26),
-    new Date(2026,11,3),new Date(2026,11,10),new Date(2026,11,17),
-    new Date(2026,11,24),new Date(2026,11,31),new Date(2027,0,7)
+    new Date(2026,8,9),new Date(2026,8,15),new Date(2026,8,22),
+    new Date(2026,8,29),new Date(2026,9,6),new Date(2026,9,13),
+    new Date(2026,9,20),new Date(2026,9,27),new Date(2026,10,3),
+    new Date(2026,10,10),new Date(2026,10,17),new Date(2026,10,24),
+    new Date(2026,11,1),new Date(2026,11,8),new Date(2026,11,15),
+    new Date(2026,11,22),new Date(2026,11,29),new Date(2027,0,5)
   ];
   let w=1;
   for(let i=0;i<starts.length;i++){if(now>=starts[i])w=i+1;else break}
