@@ -495,7 +495,7 @@ render();
   }catch(e){console.warn('Shared startup/sync failed',e)}
   const cw=appCurrentWeek();
   lastAutoWeek=cw;
-  const rw=latestCompletedWeek()||Math.max(2,currentNFLWeek());
+  const rw=cw;
   repairVisualUI(cw);
   if($('week'))$('week').value=String(cw);
   if($('pickWeek'))$('pickWeek').value=String(cw);
