@@ -248,6 +248,7 @@ aside .sf-card{padding:16px 20px!important} .side-title{font-size:26px!important
     <aside>
       <div class="sf-card"><h3 class="side-title">Top 3 Players</h3><div id="sidebarTop3"></div></div>
       <div class="sf-card"><h3 class="side-title">● Your Record</h3><div class="your-record"><div><div id="yourName">—</div><div id="yourRecord" class="big">0 - 0</div></div><div><div>Rank</div><div id="yourRank" class="big rank-green">—</div></div></div></div>
+      <div class="sf-card"><h3 class="side-title">✓ Week <span id="submissionWeek">—</span> Pick Status</h3><div id="submissionStatus"></div></div>
       <div class="sf-card"><h3 class="side-title">ⓘ Pick'em Info</h3><ul class="info-list"><li>Pick the winner of each game.</li><li>Picks lock <b>15 minutes after kickoff.</b></li><li>Team records update from completed games.</li><li>Check Results for final scores.</li><li>Weekly ties use the final-game total-points tiebreaker.</li><li>Other players’ picks appear after kickoff.</li><li>See Leaderboard for weekly winners, season standings, and achievements.</li></ul></div>
       <div class="sf-card"><h3 class="side-title">▣ NFL Season</h3><b>2026 Regular Season</b><p class="muted">Good luck, and enjoy the season!</p></div>
     </aside>
@@ -423,7 +424,7 @@ function headerTop3(){
         (x?(x.s.c+' - '+x.s.l):'0 - 0')+'</span></div></div>';
     }).join('')+'</div>';
 }
-function render(){repairVisualUI();renderSchedule();renderResults();renderStandings();renderPlayers();renderPicks();renderLeaders();renderSidebars();renderCommissionerResults();setIdentityDisplay();headerTop3()}
+function render(){repairVisualUI();renderSchedule();renderResults();renderStandings();renderPlayers();renderPicks();renderLeaders();renderSidebars();renderSubmissionStatus();renderCommissionerResults();setIdentityDisplay();headerTop3()}
 function actualWinner(g){if(g.winner)return g.winner;if(g.ascore!=null&&g.hscore!=null){if(g.ascore>g.hscore)return g.away;if(g.hscore>g.ascore)return g.home;}return null}
 function renderSchedule(){let gs=gamesFor(week.value);scheduleGames.innerHTML=gs.length?gs.map(g=>{let w=actualWinner(g),score=(g.ascore!=null&&g.hscore!=null)?`${g.away} ${g.ascore} – ${g.home} ${g.hscore}`:'';return `<div class="game"><div class="team">${logo(g.away)}<span class="teamname">${team(g.away)}<div class="muted">${g.away}</div></span></div><div style="text-align:center">at</div><div class="team">${logo(g.home)}<span class="teamname">${team(g.home)}<div class="muted">${g.home}</div></span></div><div style="text-align:center" class="${w?'final':''}">${w?`FINAL<br>${score}<br><span class="tiny">Winner: ${w}</span>`:new Date(g.date).toLocaleString()}</div></div>`}).join(''):'<p class="warn">No games are loaded for this week yet.</p>'}
 function finalGameForWeek(w){return gamesFor(w).slice().sort((a,b)=>new Date(b.date)-new Date(a.date))[0]||null}
@@ -461,6 +462,7 @@ function score(pid){let c=0,l=0;D.games.forEach(g=>{if(+g.week<2)return;let w=ac
 function changePickWeek(delta){let w=Math.max(1,Math.min(22,(+pickWeek.value||1)+delta));pickWeek.value=String(w);renderPicks()}
 function clearCurrentPicks(){let me=currentPlayer(),w=+pickWeek.value;if(!me)return;const saved=D.picks[me.id+'|'+w]?.games||{};tempPicks={...saved};const tb=D.tiebreakers?.[me.id+'|'+w];tempTiebreaker=tb==null?'':String(tb);picksDirty=false;renderPicks(true);$('lastSaved').textContent='Unsaved changes discarded — saved picks restored'}
 function seasonRankLabel(rows,index){if(index<0||!rows[index])return '—';const x=rows[index],first=rows.findIndex(r=>r.s.c===x.s.c&&r.s.l===x.s.l),count=rows.filter(r=>r.s.c===x.s.c&&r.s.l===x.s.l).length;return (count>1?'T-':'')+(first+1)}
+function renderSubmissionStatus(){let el=$('submissionStatus'),wk=$('submissionWeek');if(!el)return;let w=+$('pickWeek').value||appCurrentWeek(),gs=gamesFor(w),fg=finalGameForWeek(w);if(wk)wk.textContent=String(w);el.innerHTML=D.players.map(p=>{let saved=D.picks[p.id+'|'+w]?.games||{},allPicked=gs.length>0&&gs.every(g=>!!saved[g.id]),tb=D.tiebreakers?.[p.id+'|'+w],tbComplete=!fg||tb!=null,submitted=allPicked&&tbComplete;return `<div class="side-row"><div class="side-player">${esc(p.name)}</div><b>${submitted?'✓ Submitted':'Not Submitted'}</b></div>`}).join('')||'<p class="muted">No players found.</p>'}
 function renderSidebars(){
  let rows=D.players.map(p=>({p,s:score(p.id)})).sort((a,b)=>b.s.c-a.s.c||a.s.l-b.s.l||a.p.name.localeCompare(b.p.name));
  const medals=['🥇','🥈','🥉'];$('sidebarTop3').innerHTML=rows.slice(0,3).map((x,i)=>`<div class="side-row"><div class="side-player"><span class="medal">${medals[i]}</span>${esc(x.p.name)}</div><b>${x.s.c} - ${x.s.l}</b></div>`).join('')||'<p class="muted">No completed picks yet.</p>';
@@ -493,5 +495,5 @@ render();
   ensureIdentity();
 })();
 setInterval(()=>updateOfficialResults(true,appCurrentWeek()),10*60*1000);
-setInterval(async()=>{await loadSharedData();const cw=appCurrentWeek();if(lastAutoWeek&&cw!==lastAutoWeek){if($('pickWeek')&&Number($('pickWeek').value)===lastAutoWeek&&!picksDirty)$('pickWeek').value=String(cw);if($('week')&&Number($('week').value)===lastAutoWeek)$('week').value=String(cw);lastAutoWeek=cw;repairVisualUI();}if(picksDirty){renderSchedule();renderResults();renderStandings();renderPlayers();renderLeaders();renderSidebars();renderCommissionerResults();setIdentityDisplay();headerTop3();renderPicks(true);}else render();},30*1000);
+setInterval(async()=>{await loadSharedData();const cw=appCurrentWeek();if(lastAutoWeek&&cw!==lastAutoWeek){if($('pickWeek')&&Number($('pickWeek').value)===lastAutoWeek&&!picksDirty)$('pickWeek').value=String(cw);if($('week')&&Number($('week').value)===lastAutoWeek)$('week').value=String(cw);lastAutoWeek=cw;repairVisualUI();}if(picksDirty){renderSchedule();renderResults();renderStandings();renderPlayers();renderLeaders();renderSidebars();renderSubmissionStatus();renderCommissionerResults();setIdentityDisplay();headerTop3();renderPicks(true);}else render();},30*1000);
 </script></body></html>
