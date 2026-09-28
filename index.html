@@ -256,7 +256,7 @@ aside .sf-card{padding:16px 20px!important} .side-title{font-size:26px!important
 </section>
 
 <section id="leaders" class="sf-section"><div class="card"><h2>Weekly & Season Standings</h2><div id="leaderTable"></div><div id="weeklyHistory"></div><div id="achievements"></div><div style="display:none"><span id="leadName"></span><span id="leadCorrect"></span><span id="leadWrong"></span><span id="leadPct"></span></div></div></section>
-<section id="results" class="sf-section"><div class="card"><h2>Game Results</h2><div class="bar"><div><label>Week</label><select id="resultWeek"></select></div><div><button type="button" onclick="updateOfficialResults(false,Number(resultWeek.value))">Refresh Results</button></div></div><div id="playerRecords"></div><div id="resultGames"></div></div></section>
+<section id="results" class="sf-section"><div class="card"><h2>Game Results</h2><div class="bar"><div><label>Week</label><select id="resultWeek"></select></div><div><button type="button" onclick="refreshSelectedResults()">Refresh Results</button></div></div><div id="playerRecords"></div><div id="resultGames"></div></div></section>
 <section id="players" class="sf-section"><div class="card"><h2>Players</h2><p>Signed in as <b id="playersCurrentName">Not selected</b>. The family roster is managed centrally.</p></div><div class="card" id="playerList"></div></section>
 <section id="backup" class="sf-section"><div class="card"><h2>Manage</h2><div id="commissionerPanel" style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--line)"><h3>Commissioner — Player PIN Management</h3><p class="muted">Use your 6–10 digit Commissioner PIN to reset a family member who has forgotten their PIN. Resetting a PIN preserves all picks and records and signs that player out on every device.</p><div class="bar"><div><label>Commissioner PIN</label><input id="commissionerPin" type="password" inputmode="numeric" maxlength="10" placeholder="6–10 digit PIN"></div><div><button type="button" onclick="commissionerSignIn()">Unlock PIN Management</button></div></div><div id="commissionerStatus" class="muted" style="margin-top:8px"></div><div id="pinResetList" style="margin-top:12px"></div></div><button onclick="exportData()">Export Backup</button><hr><h3>Commissioner — Manual Results</h3><p class="muted">Use only when an official result needs to be corrected manually. Changes are not shared until Publish Manual Results is pressed.</p><div id="commissionerResults"></div><br><button type="button" onclick="saveResults()">Publish Manual Results</button></div></section>
 
@@ -328,6 +328,17 @@ async function updateOfficialResults(silent=false, requestedWeek){
     setSyncStatus('Automatic NFL sync unavailable. Existing shared data is still available.','bad');
     return false;
   }
+}
+
+
+async function refreshSelectedResults(){
+  const selected=Number($('resultWeek')?.value||appCurrentWeek()||1);
+  await updateOfficialResults(false,selected);
+  const resultSelect=$('resultWeek');
+  if(resultSelect)resultSelect.value=String(selected);
+  document.querySelectorAll('.sf-tab').forEach(b=>b.classList.toggle('on',b.dataset.p==='results'));
+  document.querySelectorAll('.sf-section').forEach(x=>x.classList.toggle('on',x.id==='results'));
+  renderResults();
 }
 
 
